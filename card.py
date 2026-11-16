@@ -1,35 +1,130 @@
 import os
 import tkinter as tk
 from tkinter import simpledialog, messagebox
+from collections import deque
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 
-CARD_WIDTH = 430          # ширина карточки в пикселях
-MAGIC_COLOR = "#010203"   # цвет, который станет прозрачным для окна
+CARD_WIDTH = 430
+MAGIC_COLOR = "#010203"
 
 
 # -----------------------------
-# Мок-данные (потом заменишь на API)
+# Мок-данные (заглушки, позже подставишь API)
 # -----------------------------
 MOCK_DATA = {
     "nickname": "SteelSeal",
     "clan": "TEST",
-    "position": "PVP",
-    "mode": "МИР КОРАБЛЕЙ",
+    "position": "GK",
+    "mode": "random",
     "rating": 88,
-    "battles": 5321,
-    "winrate": 61.4,
-    "avg_damage": 72500,
-    "avg_frags": 1.08,
-    "avg_xp": 1450,
-    "max_frags": 6,
+    "pac": 88,
+    "sho": 79,
+    "pas": 74,
+    "dri": 91,
+    "def": 67,
+    "phy": 82,
 }
 
 
 def fetch_player_data(nickname):
-    """Позже сюда вставишь вызов API. Пока мок."""
+    """Позже сюда встанет вызов API. Пока заглушка."""
     return {**MOCK_DATA, "nickname": nickname or MOCK_DATA["nickname"]}
+
+
+# -----------------------------
+# Темы: координаты в долях ширины/высоты карточки.
+# rating/position — anchor "ls" (левый край, базовая линия НА линии-заглушке),
+# остальные — "mm" (по центру точки).
+# -----------------------------
+THEMES = {
+    "white": {
+        "file": "templates/Icon.png",
+        "rating":   (0.229, 0.237),
+        "position": (0.229, 0.303),
+        "name":     (0.500, 0.580),
+        "clan":     (0.500, 0.612),
+        "mode":     (0.500, 0.858),
+        "stats_rows": [0.692, 0.752, 0.812],
+        "label_x": (0.368, 0.728),
+        "value_dx": -0.095,
+        "draw_labels": False,   # аббревиатуры уже напечатаны на фоне
+        "text":  (135, 115, 35, 255),
+        "accent": (135, 115, 35, 255),
+    },
+    "gold": {
+        "file": "templates/Gold.png",
+        "rating":   (0.180, 0.260),
+        "position": (0.180, 0.360),
+        "name":     (0.500, 0.545),
+        "clan":     (0.500, 0.578),
+        "mode":     (0.500, 0.610),
+        "stats_rows": [0.665, 0.720, 0.775],
+        "label_x": (0.368, 0.728),
+        "value_dx": -0.095,
+        "draw_labels": True,    # фон пустой — печатаем PAC/SHO/... сами
+        "text":  (60, 40, 10, 255),
+        "accent": (50, 30, 5, 255),
+    },
+    "silver": {
+        "file": "templates/Silver.png",
+        "rating":   (0.283, 0.300),
+        "position": (0.283, 0.362),
+        "name":     (0.500, 0.545),
+        "clan":     (0.500, 0.578),
+        "mode":     (0.500, 0.800),
+        "stats_rows": [0.665, 0.720, 0.775],
+        "label_x": (0.368, 0.728),
+        "value_dx": -0.095,
+        "draw_labels": True,
+        "text":  (40, 40, 40, 255),
+        "accent": (20, 20, 20, 255),
+    },
+    "bronze": {
+        "file": "templates/Bronze.png",
+        "rating":   (0.283, 0.300),
+        "position": (0.283, 0.362),
+        "name":     (0.500, 0.545),
+        "clan":     (0.500, 0.578),
+        "mode":     (0.500, 0.800),
+        "stats_rows": [0.665, 0.720, 0.775],
+        "label_x": (0.368, 0.728),
+        "value_dx": -0.095,
+        "draw_labels": True,
+        "text":  (70, 35, 15, 255),
+        "accent": (55, 25, 10, 255),
+    },
+    "blue": {
+        "file": "templates/UCL.png",
+        "rating":   (0.213, 0.333),
+        "position": (0.213, 0.428),
+        "name":     (0.500, 0.555),
+        "clan":     (0.500, 0.588),
+        "mode":     (0.500, 0.820),
+        "stats_rows": [0.665, 0.725, 0.785],
+        "label_x": (0.387, 0.733),
+        "value_dx": -0.105,
+        "draw_labels": False,   # на фоне напечатаны VEL/TIR/... — не дублируем
+        "text":  (225, 235, 250, 255),
+        "accent": (240, 245, 255, 255),
+    },
+}
+
+THEME_ORDER = ["white", "gold", "silver", "bronze", "blue"]
+
+SIZES = {
+    "rating": 40,
+    "position": 18,
+    "name": 26,
+    "clan": 13,
+    "mode": 11,
+    "value": 20,
+    "label": 15,
+}
+
+STAT_ORDER = [("PAC", "pac"), ("SHO", "sho"), ("PAS", "pas"),
+              ("DRI", "dri"), ("DEF", "def"), ("PHY", "phy")]
 
 
 # -----------------------------
@@ -71,156 +166,138 @@ def get_font(size, bold=True):
 
 
 # -----------------------------
-# Раскладки под каждый фон.
-# Координаты в долях от ширины/высоты карточки: (x, y, size)
+# Фон: flood-fill от углов убирает внешнюю подложку,
+# чтобы окно повторяло форму карточки
 # -----------------------------
-LAYOUTS = {
-    "gold": {
-        "file": "templates/Silver.png",
-        "name":     (0.500, 0.098, 32),
-        "clan":     (0.500, 0.140, 15),
-        "rating":   (0.300, 0.320, 62),
-        "position": (0.300, 0.408, 19),
-        "mode":     (0.500, 0.452, 22),
-        "stats": [
-            (0.257, 0.685), (0.742, 0.685),
-            (0.257, 0.775), (0.742, 0.775),
-            (0.257, 0.868), (0.742, 0.868),
-        ],
-        "stat_value_size": 24,
-        "stat_label_size": 24,
-        "text":  (240, 226, 170, 255),
-        "accent": (255, 216, 120, 255),
-    },
-    "blue": {
-        "file": "templates/UCL.png",
-        "name":     (0.630, 0.082, 28),
-        "clan":     (0.630, 0.138, 14),
-        "rating":   (0.160, 0.100, 50),
-        "position": (0.160, 0.172, 15),
-        "mode":     (0.500, 0.478, 22),
-        "stats": [
-            (0.190, 0.775), (0.500, 0.775), (0.815, 0.775),
-            (0.190, 0.908), (0.500, 0.908), (0.815, 0.908),
-        ],
-        "stat_value_size": 22,
-        "stat_label_size": 11,
-        "text":  (235, 222, 175, 255),
-        "accent": (255, 216, 120, 255),
-    },
-}
+_bg_cache = {}
 
 
-def stat_items(data):
-    return [
-        ("PAC",   f"{int(data.get('battles', 0)):,}"),
-        ("DRI",   f"{float(data.get('winrate', 0)):.1f}%"),
-        ("SHO",  f"{int(data.get('avg_damage', 0)):,}"),
-        ("DEF", f"{float(data.get('avg_frags', 0)):.2f}"),
-        ("PAS",  f"{int(data.get('avg_xp', 0)):,}"),
-        ("PHY",  f"{int(data.get('max_frags', 0))}"),
-    ]
+def _remove_outer_background(img, tol=14):
+    img = img.convert("RGBA")
+    w, h = img.size
+    px = img.load()
 
+    base = px[0, 0]
+    visited = bytearray(w * h)
+    dq = deque()
 
-# -----------------------------
-# Загрузка фона: убираем белый фон вокруг карточки,
-# чтобы окно было именно формы карточки
-# -----------------------------
-def load_card_background(path):
-    img = Image.open(path).convert("RGBA")
+    seeds = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+    for sx, sy in seeds:
+        if not visited[sy * w + sx]:
+            visited[sy * w + sx] = 1
+            dq.append((sx, sy))
 
-    pixels = img.getdata()
-    cleaned = []
-    for r, g, b, a in pixels:
-        if r > 240 and g > 240 and b > 240:
-            cleaned.append((r, g, b, 0))
-        else:
-            cleaned.append((r, g, b, a))
-    img.putdata(cleaned)
+    def close(c):
+        return (abs(c[0] - base[0]) <= tol and
+                abs(c[1] - base[1]) <= tol and
+                abs(c[2] - base[2]) <= tol)
 
-    alpha = img.split()[-1]
-    bbox = alpha.getbbox()
-    if bbox:
-        img = img.crop(bbox)
+    while dq:
+        x, y = dq.popleft()
+        px[x, y] = (px[x, y][0], px[x, y][1], px[x, y][2], 0)
+
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if 0 <= nx < w and 0 <= ny < h and not visited[ny * w + nx]:
+                if close(px[nx, ny]):
+                    visited[ny * w + nx] = 1
+                    dq.append((nx, ny))
 
     return img
 
 
-def draw_centered(draw, cx, cy, text, font, fill):
-    bbox = draw.textbbox((0, 0), text, font=font)
-    w = bbox[2] - bbox[0]
-    h = bbox[3] - bbox[1]
-    draw.text((cx - w / 2 - bbox[0], cy - h / 2 - bbox[1]), text, font=font, fill=fill)
+def get_background(theme_key):
+    if theme_key in _bg_cache:
+        return _bg_cache[theme_key]
 
-
-# -----------------------------
-# Рендер карточки
-# -----------------------------
-def render_card(data, theme):
-    layout = LAYOUTS[theme]
-    path = layout["file"]
-
+    path = THEMES[theme_key]["file"]
     if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"Не найден фон карточки: {path}. "
-            "Сохрани сгенерированные картинки рядом со скриптом."
-        )
+        raise FileNotFoundError(f"Не найден фон карточки: {path}")
 
-    base = load_card_background(path)
+    img = _remove_outer_background(Image.open(path))
+
+    bbox = img.split()[-1].getbbox()
+    if bbox:
+        img = img.crop(bbox)
 
     width = CARD_WIDTH
-    height = int(base.height * CARD_WIDTH / base.width)
-    base = base.resize((width, height), Image.LANCZOS)
+    height = int(img.height * CARD_WIDTH / img.width)
+    img = img.resize((width, height), Image.LANCZOS)
 
-    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
+    _bg_cache[theme_key] = img
+    return img
 
-    text_color = layout["text"]
-    accent = layout["accent"]
 
-    # Рейтинг
-    x, y, size = layout["rating"]
-    draw_centered(draw, x * width, y * height, str(data.get("rating", "--")),
-                  get_font(size), accent)
+# -----------------------------
+# Рендер
+# -----------------------------
+def render_card(data, theme_key):
+    theme = THEMES[theme_key]
+    base = get_background(theme_key)
+    w, h = base.size
+    scale = w / 430.0
 
-    # Позиция / режим
-    x, y, size = layout["position"]
-    draw_centered(draw, x * width, y * height, data.get("position", "PVP"),
-                  get_font(size), text_color)
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
 
-    # Ник
-    x, y, size = layout["name"]
-    draw_centered(draw, x * width, y * height, data.get("nickname", "PLAYER"),
-                  get_font(size), accent)
+    text = theme["text"]
+    accent = theme["accent"]
 
-    # Клан
-    x, y, size = layout["clan"]
+    # Верхний блок: ВЫРАВНИВАНИЕ ПО ЛЕВОМУ КРАЮ (anchor "ls"),
+    # текст стоит НА линиях-заглушках, как на карточках
+    rx, ry = theme["rating"]
+    d.text((rx * w, ry * h), str(data.get("rating", "--")),
+           font=get_font(int(SIZES["rating"] * scale)),
+           fill=accent, anchor="ls")
+
+    px_, py_ = theme["position"]
+    d.text((px_ * w, py_ * h), data.get("position", "PVP"),
+           font=get_font(int(SIZES["position"] * scale), bold=False),
+           fill=text, anchor="ls")
+
+    # Ник и клан — классика FUT: над разделителем
+    nx, ny = theme["name"]
+    d.text((nx * w, ny * h), data.get("nickname", "PLAYER"),
+           font=get_font(int(SIZES["name"] * scale)),
+           fill=accent, anchor="mm")
+
     clan = data.get("clan")
-    draw_centered(draw, x * width, y * height, f"[{clan}]" if clan else "",
-                  get_font(size, bold=False), text_color)
+    if clan:
+        cx, cy = theme["clan"]
+        d.text((cx * w, cy * h), f"[{clan}]",
+               font=get_font(int(SIZES["clan"] * scale), bold=False),
+               fill=text, anchor="mm")
 
-    # Подпись по центру
-    x, y, size = layout["mode"]
-    draw_centered(draw, x * width, y * height, data.get("mode", ""),
-                  get_font(size, bold=False), text_color)
+    # Подпись внизу (над короткой линией)
+    mx, my = theme["mode"]
+    d.text((mx * w, my * h), data.get("mode", ""),
+           font=get_font(int(SIZES["mode"] * scale), bold=False),
+           fill=text, anchor="mm")
 
-    # Статы
-    items = stat_items(data)
-    for (cx, cy), (label, value) in zip(layout["stats"], items):
-        px = cx * width
-        py = cy * height
+    # Статы: значение слева от аббревиатуры
+    lx = theme["label_x"]
+    rows = theme["stats_rows"]
+    dx = theme["value_dx"]
 
-        draw_centered(draw, px, py - 12, value,
-                      get_font(layout["stat_value_size"]), accent)
-        draw_centered(draw, px, py + 16, label,
-                      get_font(layout["stat_label_size"], bold=False), text_color)
+    for i, (lab, key) in enumerate(STAT_ORDER):
+        col = 0 if i < 3 else 1
+        row = i % 3
+
+        x_lab = lx[col]
+        vy = rows[row] * h
+
+        d.text(((x_lab + dx) * w, vy), str(int(data.get(key, 0))),
+               font=get_font(int(SIZES["value"] * scale)),
+               fill=accent, anchor="mm")
+
+        if theme["draw_labels"]:
+            d.text((x_lab * w, vy), lab,
+                   font=get_font(int(SIZES["label"] * scale), bold=False),
+                   fill=text, anchor="mm")
 
     card = Image.alpha_composite(base, overlay)
 
-    # Кладём карточку на "магический" цвет, который окно сделает прозрачным
-    out = Image.new("RGBA", (width, height), (1, 2, 3, 255))
+    out = Image.new("RGBA", (w, h), (1, 2, 3, 255))
     out = Image.alpha_composite(out, card)
-
     return out.convert("RGB")
 
 
@@ -235,7 +312,6 @@ class FifaCardWindow(tk.Tk):
         self.attributes("-topmost", True)
         self.configure(bg=MAGIC_COLOR)
 
-        # Прозрачность окна по форме карточки (работает на Windows)
         try:
             self.attributes("-transparentcolor", MAGIC_COLOR)
         except Exception:
@@ -253,8 +329,10 @@ class FifaCardWindow(tk.Tk):
 
         self.bind_all("<Escape>", lambda e: self.destroy())
         self.bind_all("<Button-3>", lambda e: self.destroy())
-        self.bind_all("1", lambda e: self.set_theme("gold"))
-        self.bind_all("2", lambda e: self.set_theme("blue"))
+
+        for i, key in enumerate(THEME_ORDER, start=1):
+            self.bind_all(str(i), lambda e, k=key: self.set_theme(k))
+
         self.bind_all("r", lambda e: self.refresh())
         self.bind_all("R", lambda e: self.refresh())
         self.bind_all("n", lambda e: self.ask_nickname())
@@ -265,8 +343,8 @@ class FifaCardWindow(tk.Tk):
 
         self.refresh()
 
-    def set_theme(self, theme):
-        self.theme = theme
+    def set_theme(self, theme_key):
+        self.theme = theme_key
         self.refresh()
 
     def ask_nickname(self):
